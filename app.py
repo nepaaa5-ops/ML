@@ -14,7 +14,7 @@ def clean_industry(text: str) -> str:
 
 def get_wikipedia_pages(industry: str, k: int = 5):
     retriever = WikipediaRetriever(top_k_results=k, doc_content_chars_max=2000)
-    docs = retriever.get_relevant_documents(industry)
+    docs = retriever.invoke(industry)
     return docs[:k]
 
 
