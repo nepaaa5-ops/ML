@@ -2,10 +2,10 @@ import os
 import re
 import streamlit as st
 from langchain_community.retrievers import WikipediaRetriever
-from openai import OpenAI
+from openai import OpenAI, OpenAIError
 
 APP_TITLE = "Market Research Assistant"
-DEFAULT_LLM = "gpt-5.2-pro"  # Placeholder; update as needed.
+DEFAULT_LLM = "gpt-5.2-pro"  # Fill in your model name later.
 
 
 def clean_industry(text: str) -> str:
@@ -14,6 +14,7 @@ def clean_industry(text: str) -> str:
 
 def get_wikipedia_pages(industry: str, k: int = 5):
     retriever = WikipediaRetriever(top_k_results=k, doc_content_chars_max=2000)
+    # LangChain retrievers use `invoke` in recent versions.
     docs = retriever.invoke(industry)
     return docs[:k]
 
@@ -27,6 +28,7 @@ def doc_to_url(doc) -> str:
 
 def generate_report(industry: str, docs, model: str, api_key: str) -> str:
     client = OpenAI(api_key=api_key)
+
     sources = []
     for i, doc in enumerate(docs, start=1):
         title = doc.metadata.get("title", f"Source {i}")
@@ -46,16 +48,16 @@ def generate_report(industry: str, docs, model: str, api_key: str) -> str:
         f"Sources:\n{sources_text}"
     )
 
-    resp = client.chat.completions.create(
+    resp = client.responses.create(
         model=model,
-        messages=[
+        input=[
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
         temperature=0.3,
     )
-    text = resp.choices[0].message.content.strip()
 
+    text = resp.output_text.strip()
     words = text.split()
     if len(words) > 500:
         text = " ".join(words[:500]) + "..."
@@ -73,7 +75,6 @@ with st.sidebar:
 
 st.markdown("Step 1: Enter an industry")
 industry_input = st.text_input("Industry", placeholder="e.g., Electric vehicles")
-
 industry = clean_industry(industry_input)
 
 if "wiki_docs" not in st.session_state:
@@ -96,8 +97,13 @@ if st.session_state.wiki_docs:
     if st.button("Generate report"):
         if not api_key:
             st.warning("Please enter an API key to generate the report.")
+        elif not llm_choice:
+            st.warning("Please set the LLM model name in the sidebar.")
         else:
             with st.spinner("Generating report..."):
-                report = generate_report(industry, st.session_state.wiki_docs, llm_choice, api_key)
-            st.subheader("Industry report")
-            st.write(report)
+                try:
+                    report = generate_report(industry, st.session_state.wiki_docs, llm_choice, api_key)
+                    st.subheader("Industry report")
+                    st.write(report)
+                except OpenAIError as e:
+                    st.error(f"LLM request failed: {e}")
