@@ -48,13 +48,13 @@ def generate_report(industry: str, docs, model: str, api_key: str) -> str:
         f"Sources:\n{sources_text}"
     )
 
-  resp = client.responses.create(
+resp = client.responses.create(
     model=model,
     input=[
         {"role": "system", "content": system},
         {"role": "user", "content": user},
     ],
-  )
+)
 
     text = resp.output_text.strip()
     words = text.split()
