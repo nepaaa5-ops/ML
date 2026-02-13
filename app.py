@@ -12,6 +12,12 @@ def clean_industry(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").strip())
 
 
+def strip_markdown_headings(text: str) -> str:
+    # Remove leading markdown heading markers like "#", "##", "###"
+    text = re.sub(r"(?m)^\s{0,3}#{1,6}\s*", "", text or "")
+    return text.strip()
+
+
 def get_wikipedia_pages(industry: str, k: int = 5):
     retriever = WikipediaRetriever(top_k_results=k, doc_content_chars_max=2000)
     # LangChain retrievers use `invoke` in recent versions.
@@ -56,7 +62,7 @@ def generate_report(industry: str, docs, model: str, api_key: str) -> str:
         ],
     )
 
-    text = resp.output_text.strip()
+    text = strip_markdown_headings(resp.output_text)
     words = text.split()
     if len(words) > 500:
         text = " ".join(words[:500]) + "..."
@@ -102,7 +108,7 @@ if st.session_state.wiki_docs:
             with st.spinner("Generating report..."):
                 try:
                     report = generate_report(industry, st.session_state.wiki_docs, llm_choice, api_key)
-                    st.subheader("Industry report")
-                    st.write(report)
+                    st.markdown("**Industry report**")
+                    st.text(report)
                 except OpenAIError as e:
                     st.error(f"LLM request failed: {e}")
