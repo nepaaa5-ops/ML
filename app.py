@@ -111,4 +111,4 @@ if st.session_state.wiki_docs:
                     st.markdown("**Industry report**")
                     st.text(report)
                 except OpenAIError as e:
-                    st.error(f"LLM request failed: {e}"
+                    st.error(f"LLM request failed: {e}")
