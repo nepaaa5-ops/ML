@@ -42,15 +42,21 @@ def generate_report(industry: str, docs, model: str, api_key: str) -> str:
     user = (
         f"Industry: {industry}\n\n"
         "Using ONLY the information from the sources below, write an industry report under 500 words.\n"
-        "Format as plain text with exactly 6 sections. Each section must be on its own line and separated by a blank line.\n"
-        "Use this exact structure and headings:\n"
-        "Market Definition:\n"
-        "Major Segments:\n"
-        "Key Players/Types:\n"
-        "Value Chain:\n"
-        "Demand Drivers:\n"
-        "Risks/Trends:\n"
-        "Do NOT use markdown symbols or bullets.\n\n"
+        "Format in Markdown with level-2 headings, and put the content on the next line.\n"
+        "Use this exact structure:\n"
+        "## Market Definition\n"
+        "<text>\n\n"
+        "## Major Segments\n"
+        "<text>\n\n"
+        "## Key Players/Types\n"
+        "<text>\n\n"
+        "## Value Chain\n"
+        "<text>\n\n"
+        "## Demand Drivers\n"
+        "<text>\n\n"
+        "## Risks/Trends\n"
+        "<text>\n"
+        "Do NOT use bullets or bold inside the paragraphs.\n\n"
         f"Sources:\n{sources_text}"
     )
 
@@ -109,6 +115,6 @@ if st.session_state.wiki_docs:
                 try:
                     report = generate_report(industry, st.session_state.wiki_docs, llm_choice, api_key)
                     st.markdown("**Industry report**")
-                    st.text(report)
+                    st.markdown(report)
                 except OpenAIError as e:
                     st.error(f"LLM request failed: {e}")
