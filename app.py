@@ -5,22 +5,15 @@ from langchain_community.retrievers import WikipediaRetriever
 from openai import OpenAI, OpenAIError
 
 APP_TITLE = "Market Research Assistant"
-DEFAULT_LLM = "gpt-5.2-pro"  # Fill in your model name later.
+DEFAULT_LLM = "gpt-5.2-pro"
 
 
 def clean_industry(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").strip())
 
 
-def strip_markdown_headings(text: str) -> str:
-    # Remove leading markdown heading markers like "#", "##", "###"
-    text = re.sub(r"(?m)^\s{0,3}#{1,6}\s*", "", text or "")
-    return text.strip()
-
-
 def get_wikipedia_pages(industry: str, k: int = 5):
     retriever = WikipediaRetriever(top_k_results=k, doc_content_chars_max=2000)
-    # LangChain retrievers use invoke in recent versions.
     docs = retriever.invoke(industry)
     return docs[:k]
 
@@ -48,9 +41,16 @@ def generate_report(industry: str, docs, model: str, api_key: str) -> str:
     )
     user = (
         f"Industry: {industry}\n\n"
-        "Using ONLY the information from the sources below, write an industry report "
-        "under 500 words. Cover: market definition, major segments, key players/types, "
-        "value chain, demand drivers, and risks/trends. If information is missing, say so.\n\n"
+        "Using ONLY the information from the sources below, write an industry report under 500 words.\n"
+        "Format as plain text with exactly 6 sections. Each section must be on its own line and separated by a blank line.\n"
+        "Use this exact structure and headings:\n"
+        "Market Definition:\n"
+        "Major Segments:\n"
+        "Key Players/Types:\n"
+        "Value Chain:\n"
+        "Demand Drivers:\n"
+        "Risks/Trends:\n"
+        "Do NOT use markdown symbols or bullets.\n\n"
         f"Sources:\n{sources_text}"
     )
 
@@ -62,7 +62,7 @@ def generate_report(industry: str, docs, model: str, api_key: str) -> str:
         ],
     )
 
-    text = strip_markdown_headings(resp.output_text)
+    text = resp.output_text.strip()
     words = text.split()
     if len(words) > 500:
         text = " ".join(words[:500]) + "..."
@@ -112,3 +112,4 @@ if st.session_state.wiki_docs:
                     st.text(report)
                 except OpenAIError as e:
                     st.error(f"LLM request failed: {e}")
+
