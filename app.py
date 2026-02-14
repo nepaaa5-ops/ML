@@ -114,11 +114,7 @@ st.title(APP_TITLE)
 with st.sidebar:
     st.header("Settings")
     llm_choice = st.selectbox("LLM", options=[DEFAULT_LLM])
-    api_key = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY", "")
-
-    if not api_key:
-        st.error("Missing OPENAI_API_KEY. Set it in Streamlit Secrets or .streamlit/secrets.toml")
-        st.stop()
+    api_key = st.text_input("API key", type="password", value=os.getenv("OPENAI_API_KEY", ""))
 
 st.markdown("Step 1: Enter an industry")
 industry_input = st.text_input("Industry", placeholder="e.g., Electric vehicles")
@@ -153,20 +149,17 @@ if st.session_state.wiki_docs:
         if url:
             st.write(url)
 
-st.markdown("Step 3: Generate industry report")
-if st.button("Generate report"):
-    if (not api_key) or (not api_key.startswith("sk-")):
-        st.warning("API key ไม่ถูกต้องหรือยังไม่ได้ตั้งค่า (ควรขึ้นต้นด้วย sk-)")
-        st.stop()
-
-    if not llm_choice:
-        st.warning("Please set the LLM model name in the sidebar.")
-        st.stop()
-
-    with st.spinner("Generating report..."):
-        try:
-            report = generate_report(industry, st.session_state.wiki_docs, llm_choice, api_key)
-            st.markdown("**Industry report**")
-            st.text(report)
-        except OpenAIError as e:
-            st.error(f"LLM request failed: {e}")
+    st.markdown("Step 3: Generate industry report")
+    if st.button("Generate report"):
+        if not api_key:
+            st.warning("Please enter an API key to generate the report.")
+        elif not llm_choice:
+            st.warning("Please set the LLM model name in the sidebar.")
+        else:
+            with st.spinner("Generating report..."):
+                try:
+                    report = generate_report(industry, st.session_state.wiki_docs, llm_choice, api_key)
+                    st.markdown("**Industry report**")
+                    st.text(report)
+                except OpenAIError as e:
+                    st.error(f"LLM request failed: {e}")
