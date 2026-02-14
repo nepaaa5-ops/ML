@@ -153,7 +153,7 @@ if st.session_state.wiki_docs:
         if url:
             st.write(url)
 
-  st.markdown("Step 3: Generate industry report")
+st.markdown("Step 3: Generate industry report")
 if st.button("Generate report"):
     if (not api_key) or (not api_key.startswith("sk-")):
         st.warning("API key ไม่ถูกต้องหรือยังไม่ได้ตั้งค่า (ควรขึ้นต้นด้วย sk-)")
