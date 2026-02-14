@@ -86,14 +86,20 @@ if "wiki_docs" not in st.session_state:
     st.session_state.wiki_docs = []
 
 if st.button("Find Wikipedia pages"):
-    # Block obvious non-industry inputs like "hello"
     lower = industry.lower()
-    if (not industry) or (len(industry) < 3) or (lower in ["hi", "hello", "hey", "test", "testing"]):
+
+    # Must look like an industry:
+    # - either 2+ words (e.g., "fast fashion")
+    # - or contains "industry/sector/market"
+    if (
+        not industry
+        or lower in ["hi", "hello", "hey", "test", "testing"]
+        or (len(industry.split()) < 2 and not any(w in lower for w in ["industry", "sector", "market"]))
+    ):
         st.warning("Please enter a valid industry (e.g., 'fast fashion', 'electric vehicles', 'retail banking').")
         st.session_state.wiki_docs = []
     else:
-        # Improve retrieval by appending "industry" (helps Wikipedia search)
-        query = industry if any(x in lower for x in ["industry", "sector", "market"]) else f"{industry} industry"
+        query = industry if any(w in lower for w in ["industry", "sector", "market"]) else f"{industry} industry"
         docs = get_wikipedia_pages(query)
 
         if not docs:
@@ -101,6 +107,7 @@ if st.button("Find Wikipedia pages"):
             st.session_state.wiki_docs = []
         else:
             st.session_state.wiki_docs = docs
+
 
 if st.session_state.wiki_docs:
     st.markdown("Step 2: Top 5 Wikipedia pages")
