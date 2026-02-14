@@ -11,6 +11,44 @@ DEFAULT_LLM = "gpt-5.2-pro"
 def clean_industry(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").strip())
 
+# ------------------- ADD: industry validation helpers -------------------
+INDUSTRY_HINTS = [
+    "industry", "sector", "market", "markets",
+    "banking", "finance", "financial",
+    "manufacturing", "services", "business", "trade",
+    "retail", "supply", "economy", "economic",
+    "companies", "corporation", "firm", "firms"
+]
+
+BAD_INPUTS = {"hi", "hello", "hey", "yo", "sup", "test", "testing", "ok", "okay", "thanks"}
+
+def build_industry_query(industry: str) -> str:
+    lower = industry.lower()
+    if any(w in lower for w in ["industry", "sector", "market"]):
+        return industry
+    return f"{industry} industry"
+
+def looks_like_industry_from_results(user_input: str, docs) -> bool:
+    """
+    Accept if results look industry/sector-related.
+    """
+    titles = [(d.metadata.get("title") or "").lower() for d in docs]
+
+    # Strong signal: titles include industry hints
+    if any(any(h in t for h in INDUSTRY_HINTS) for t in titles):
+        return True
+
+    # Medium signal: user input appears in at least 2 titles
+    q = (user_input or "").lower()
+    q_tokens = [tok for tok in re.split(r"\W+", q) if tok]
+    if q_tokens:
+        hits = sum(1 for t in titles if any(tok in t for tok in q_tokens))
+        if hits >= 2:
+            return True
+
+    return False
+# ------------------------------------------------------------------------
+
 
 def get_wikipedia_pages(industry: str, k: int = 5):
     retriever = WikipediaRetriever(top_k_results=k, doc_content_chars_max=2000)
@@ -88,22 +126,17 @@ if "wiki_docs" not in st.session_state:
 if st.button("Find Wikipedia pages"):
     lower = industry.lower()
 
-    # Must look like an industry:
-    # - either 2+ words (e.g., "fast fashion")
-    # - or contains "industry/sector/market"
-    if (
-        not industry
-        or lower in ["hi", "hello", "hey", "test", "testing"]
-        or (len(industry.split()) < 2 and not any(w in lower for w in ["industry", "sector", "market"]))
-    ):
+    # Basic invalid inputs
+    if (not industry) or (lower in BAD_INPUTS) or (not re.search(r"[A-Za-z]", industry)):
         st.warning("Please enter a valid industry (e.g., 'fast fashion', 'electric vehicles', 'retail banking').")
         st.session_state.wiki_docs = []
     else:
-        query = industry if any(w in lower for w in ["industry", "sector", "market"]) else f"{industry} industry"
-        docs = get_wikipedia_pages(query)
+        query = build_industry_query(industry)
+        docs = get_wikipedia_pages(query, k=5)
 
-        if not docs:
-            st.warning("No relevant Wikipedia pages found. Try a more specific industry term.")
+        # Reject if results don't look like an industry
+        if (not docs) or (not looks_like_industry_from_results(industry, docs)):
+            st.warning("Please enter a valid industry (e.g., 'fast fashion', 'electric vehicles', 'retail banking').")
             st.session_state.wiki_docs = []
         else:
             st.session_state.wiki_docs = docs
