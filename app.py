@@ -5,139 +5,55 @@ from langchain_community.retrievers import WikipediaRetriever
 from openai import OpenAI, OpenAIError
 
 APP_TITLE = "Market Research Assistant"
-DEFAULT_LLM = "gpt-5.2-pro"  # keep as you had it; change to your available model if needed
-
-# Default ranking behavior (can be overridden from sidebar)
-DEFAULT_K_CANDIDATES = 25
-DEFAULT_MIN_RELEVANCE_SCORE = 0.35
+DEFAULT_LLM = "gpt-5.2-pro"
 
 
 def clean_industry(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").strip())
 
+# ------------------- ADD: industry validation helpers -------------------
+INDUSTRY_HINTS = [
+    "industry", "sector", "market", "markets",
+    "banking", "finance", "financial",
+    "manufacturing", "services", "business", "trade",
+    "retail", "supply", "economy", "economic",
+    "companies", "corporation", "firm", "firms"
+]
 
-# ------------------- Industry query + validation -------------------
 BAD_INPUTS = {"hi", "hello", "hey", "yo", "sup", "test", "testing", "ok", "okay", "thanks"}
 
 def build_industry_query(industry: str) -> str:
-    lower = (industry or "").lower()
+    lower = industry.lower()
     if any(w in lower for w in ["industry", "sector", "market"]):
         return industry
     return f"{industry} industry"
-# --------------------------------------------------------------
 
+def looks_like_industry_from_results(user_input: str, docs) -> bool:
+    """
+    Accept if results look industry/sector-related.
+    """
+    titles = [(d.metadata.get("title") or "").lower() for d in docs]
 
-# ------------------- Wiki filtering & ranking -------------------
-INDUSTRY_HINTS = [
-    "industry", "sector", "market", "markets", "value chain", "supply chain",
-    "manufacturing", "services", "retail", "wholesale", "distribution",
-    "revenue", "sales", "demand", "customers", "suppliers", "competition",
-    "companies", "company", "firms", "business", "economy", "economic",
-]
-
-NOISE_TITLE_HINTS = [
-    "disambiguation", "may refer to", "list of", "outline of", "glossary of",
-    "index of", "template:", "wikipedia:", "category:"
-]
-
-def tokenize(text: str):
-    # simple unicode-friendly tokenization
-    text = (text or "").lower()
-    toks = re.split(r"[^\w]+", text, flags=re.UNICODE)
-    return [t for t in toks if t and len(t) > 1]
-
-def is_noise_page(title: str, content: str) -> bool:
-    t = (title or "").lower()
-    c = (content or "").lower()
-
-    if any(h in t for h in NOISE_TITLE_HINTS):
+    # Strong signal: titles include industry hints
+    if any(any(h in t for h in INDUSTRY_HINTS) for t in titles):
         return True
-    if "may refer to" in c and "disambiguation" in c:
-        return True
+
+    # Medium signal: user input appears in at least 2 titles
+    q = (user_input or "").lower()
+    q_tokens = [tok for tok in re.split(r"\W+", q) if tok]
+    if q_tokens:
+        hits = sum(1 for t in titles if any(tok in t for tok in q_tokens))
+        if hits >= 2:
+            return True
 
     return False
-
-def overlap_score(query_tokens, text_tokens) -> float:
-    if not query_tokens:
-        return 0.0
-    qset = set(query_tokens)
-    tset = set(text_tokens)
-    inter = len(qset & tset)
-    return inter / max(1, len(qset))
-
-def phrase_match_boost(query: str, title: str, content: str) -> float:
-    q = (query or "").strip().lower()
-    if not q:
-        return 0.0
-    t = (title or "").lower()
-    c = (content or "").lower()
-
-    boost = 0.0
-    if q in t:
-        boost += 1.5
-    if q in c:
-        boost += 0.7
-    return boost
-
-def industry_hint_boost(title: str, content: str) -> float:
-    t = (title or "").lower()
-    c = (content or "").lower()
-
-    boost = 0.0
-    boost += 0.4 * sum(1 for h in INDUSTRY_HINTS if h in t)
-    boost += 0.1 * sum(1 for h in INDUSTRY_HINTS if h in c)
-    return boost
-
-def relevance_score(industry: str, doc) -> float:
-    title = doc.metadata.get("title") or ""
-    content = doc.page_content or ""
-
-    if is_noise_page(title, content):
-        return -1.0
-
-    q_tokens = tokenize(industry)
-    t_tokens = tokenize(title)
-    c_tokens = tokenize(content)
-
-    # Title is weighted heavier than content
-    score = 0.0
-    score += 2.2 * overlap_score(q_tokens, t_tokens)
-    score += 1.0 * overlap_score(q_tokens, c_tokens)
-
-    # Exact-phrase boost
-    score += phrase_match_boost(industry, title, content)
-
-    # Industry-context boost (helps avoid random pages with same keyword but not market/sector context)
-    score += industry_hint_boost(title, content)
-
-    # Light penalty for broad list pages
-    lt = title.lower()
-    if lt.startswith("list of ") or lt.startswith("outline of "):
-        score -= 0.3
-
-    return score
-
-def filter_and_rank_docs(industry: str, docs, top_n: int = 5, min_score: float = 0.35):
-    scored = []
-    for d in docs:
-        s = relevance_score(industry, d)
-        if s >= 0:  # drop noise (-1)
-            scored.append((s, d))
-
-    scored.sort(key=lambda x: x[0], reverse=True)
-
-    # Prefer docs above threshold; fallback to best available if none meet threshold
-    strong = [(s, d) for (s, d) in scored if s >= min_score]
-    chosen = strong[:top_n] if strong else scored[:top_n]
-
-    return [d for (s, d) in chosen], chosen  # docs, plus scored pairs for debug
-# --------------------------------------------------------------
+# ------------------------------------------------------------------------
 
 
-def get_wikipedia_pages(query: str, k_candidates: int = 25):
-    retriever = WikipediaRetriever(top_k_results=k_candidates, doc_content_chars_max=2000)
-    docs = retriever.invoke(query)
-    return docs[:k_candidates]
+def get_wikipedia_pages(industry: str, k: int = 5):
+    retriever = WikipediaRetriever(top_k_results=k, doc_content_chars_max=2000)
+    docs = retriever.invoke(industry)
+    return docs[:k]
 
 
 def doc_to_url(doc) -> str:
@@ -191,8 +107,8 @@ def generate_report(industry: str, docs, model: str, api_key: str) -> str:
     return text
 
 
-# ------------------- Streamlit UI -------------------
 st.set_page_config(page_title=APP_TITLE, layout="wide")
+
 st.title(APP_TITLE)
 
 with st.sidebar:
@@ -200,70 +116,38 @@ with st.sidebar:
     llm_choice = st.selectbox("LLM", options=[DEFAULT_LLM])
     api_key = st.text_input("API key", type="password", value=os.getenv("OPENAI_API_KEY", ""))
 
-    st.divider()
-    st.subheader("Wikipedia ranking")
-    k_candidates = st.slider("Candidate pages to fetch", min_value=10, max_value=60, value=DEFAULT_K_CANDIDATES, step=5)
-    min_score = st.slider("Minimum relevance threshold", min_value=0.0, max_value=1.5, value=float(DEFAULT_MIN_RELEVANCE_SCORE), step=0.05)
-    show_debug = st.checkbox("Show debug scores", value=False)
-
 st.markdown("Step 1: Enter an industry")
 industry_input = st.text_input("Industry", placeholder="e.g., Electric vehicles")
 industry = clean_industry(industry_input)
 
 if "wiki_docs" not in st.session_state:
     st.session_state.wiki_docs = []
-if "wiki_scored" not in st.session_state:
-    st.session_state.wiki_scored = []  # store scored pairs for debug
-
 
 if st.button("Find Wikipedia pages"):
     lower = industry.lower()
 
-    # Basic invalid inputs (unicode-friendly: require at least one word char)
-    if (not industry) or (lower in BAD_INPUTS) or (not re.search(r"\w", industry, flags=re.UNICODE)):
+    # Basic invalid inputs
+    if (not industry) or (lower in BAD_INPUTS) or (not re.search(r"[A-Za-z]", industry)):
         st.warning("Please enter a valid industry (e.g., 'fast fashion', 'electric vehicles', 'retail banking').")
         st.session_state.wiki_docs = []
-        st.session_state.wiki_scored = []
     else:
         query = build_industry_query(industry)
+        docs = get_wikipedia_pages(query, k=5)
 
-        try:
-            with st.spinner("Searching Wikipedia..."):
-                candidates = get_wikipedia_pages(query, k_candidates=int(k_candidates))
-                top_docs, scored_pairs = filter_and_rank_docs(
-                    industry=industry,
-                    docs=candidates,
-                    top_n=5,
-                    min_score=float(min_score),
-                )
-        except Exception as e:
-            st.warning(f"Wikipedia search failed. Try again or adjust the query. Error: {e}")
-            top_docs, scored_pairs = [], []
-
-        if not top_docs:
-            st.warning("Couldn't find relevant Wikipedia pages for that industry. Try a more specific industry name.")
+        # Reject if results don't look like an industry
+        if (not docs) or (not looks_like_industry_from_results(industry, docs)):
+            st.warning("Please enter a valid industry (e.g., 'fast fashion', 'electric vehicles', 'retail banking').")
             st.session_state.wiki_docs = []
-            st.session_state.wiki_scored = []
         else:
-            st.session_state.wiki_docs = top_docs
-            st.session_state.wiki_scored = scored_pairs
+            st.session_state.wiki_docs = docs
 
 
 if st.session_state.wiki_docs:
-    st.markdown("Step 2: Top 5 Wikipedia pages (ranked by relevance)")
-    for idx, doc in enumerate(st.session_state.wiki_docs, start=1):
-        title = doc.metadata.get("title", f"Result {idx}")
-        url = doc_to_url(doc)
+    st.markdown("Step 2: Top 5 Wikipedia pages")
+    urls = [doc_to_url(doc) for doc in st.session_state.wiki_docs]
+    for url in urls:
         if url:
-            st.write(f"{idx}. {title} — {url}")
-        else:
-            st.write(f"{idx}. {title}")
-
-    if show_debug and st.session_state.wiki_scored:
-        with st.expander("Debug: relevance scores (higher = more relevant)"):
-            for score, doc in st.session_state.wiki_scored:
-                title = doc.metadata.get("title", "")
-                st.write(f"{score:.2f}  -  {title}")
+            st.write(url)
 
     st.markdown("Step 3: Generate industry report")
     if st.button("Generate report"):
