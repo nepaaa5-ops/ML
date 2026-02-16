@@ -1,11 +1,12 @@
 import os
 import re
+import time
 import streamlit as st
 from langchain_community.retrievers import WikipediaRetriever
 from openai import OpenAI, OpenAIError
 
 APP_TITLE = "Market Research Assistant"
-DEFAULT_LLM = "gpt-5.2-pro"  # keep as you had it; change to your available model if needed
+DEFAULT_LLM = "gpt-5.2-pro"  # change to your available model if needed
 
 # Default ranking behavior (can be overridden from sidebar)
 DEFAULT_K_CANDIDATES = 25
@@ -18,6 +19,7 @@ def clean_industry(text: str) -> str:
 
 # ------------------- Industry query + validation -------------------
 BAD_INPUTS = {"hi", "hello", "hey", "yo", "sup", "test", "testing", "ok", "okay", "thanks"}
+
 
 def build_industry_query(industry: str) -> str:
     lower = (industry or "").lower()
@@ -40,22 +42,22 @@ NOISE_TITLE_HINTS = [
     "index of", "template:", "wikipedia:", "category:"
 ]
 
+
 def tokenize(text: str):
-    # simple unicode-friendly tokenization
     text = (text or "").lower()
     toks = re.split(r"[^\w]+", text, flags=re.UNICODE)
     return [t for t in toks if t and len(t) > 1]
 
+
 def is_noise_page(title: str, content: str) -> bool:
     t = (title or "").lower()
     c = (content or "").lower()
-
     if any(h in t for h in NOISE_TITLE_HINTS):
         return True
     if "may refer to" in c and "disambiguation" in c:
         return True
-
     return False
+
 
 def overlap_score(query_tokens, text_tokens) -> float:
     if not query_tokens:
@@ -65,13 +67,13 @@ def overlap_score(query_tokens, text_tokens) -> float:
     inter = len(qset & tset)
     return inter / max(1, len(qset))
 
+
 def phrase_match_boost(query: str, title: str, content: str) -> float:
     q = (query or "").strip().lower()
     if not q:
         return 0.0
     t = (title or "").lower()
     c = (content or "").lower()
-
     boost = 0.0
     if q in t:
         boost += 1.5
@@ -79,17 +81,18 @@ def phrase_match_boost(query: str, title: str, content: str) -> float:
         boost += 0.7
     return boost
 
+
 def industry_hint_boost(title: str, content: str) -> float:
     t = (title or "").lower()
     c = (content or "").lower()
-
     boost = 0.0
     boost += 0.4 * sum(1 for h in INDUSTRY_HINTS if h in t)
     boost += 0.1 * sum(1 for h in INDUSTRY_HINTS if h in c)
     return boost
 
+
 def relevance_score(industry: str, doc) -> float:
-    title = doc.metadata.get("title") or ""
+    title = (doc.metadata or {}).get("title") or ""
     content = doc.page_content or ""
 
     if is_noise_page(title, content):
@@ -99,49 +102,62 @@ def relevance_score(industry: str, doc) -> float:
     t_tokens = tokenize(title)
     c_tokens = tokenize(content)
 
-    # Title is weighted heavier than content
     score = 0.0
     score += 2.2 * overlap_score(q_tokens, t_tokens)
     score += 1.0 * overlap_score(q_tokens, c_tokens)
 
-    # Exact-phrase boost
     score += phrase_match_boost(industry, title, content)
-
-    # Industry-context boost (helps avoid random pages with same keyword but not market/sector context)
     score += industry_hint_boost(title, content)
 
-    # Light penalty for broad list pages
     lt = title.lower()
     if lt.startswith("list of ") or lt.startswith("outline of "):
         score -= 0.3
 
     return score
 
+
 def filter_and_rank_docs(industry: str, docs, top_n: int = 5, min_score: float = 0.35):
     scored = []
     for d in docs:
         s = relevance_score(industry, d)
-        if s >= 0:  # drop noise (-1)
+        if s >= 0:
             scored.append((s, d))
 
     scored.sort(key=lambda x: x[0], reverse=True)
 
-    # Prefer docs above threshold; fallback to best available if none meet threshold
     strong = [(s, d) for (s, d) in scored if s >= min_score]
     chosen = strong[:top_n] if strong else scored[:top_n]
 
-    return [d for (s, d) in chosen], chosen  # docs, plus scored pairs for debug
+    return [d for (s, d) in chosen], chosen
 # --------------------------------------------------------------
 
 
-def get_wikipedia_pages(query: str, k_candidates: int = 25):
-    retriever = WikipediaRetriever(top_k_results=k_candidates, doc_content_chars_max=2000)
-    docs = retriever.invoke(query)
-    return docs[:k_candidates]
+def get_wikipedia_pages(query: str, k_candidates: int = 25, retries: int = 3):
+    """
+    Robust Wikipedia fetch with:
+    - load_all_available_meta=False to avoid extra metadata calls that sometimes break
+    - simple retry with backoff to handle transient Wikipedia/API failures
+    """
+    retriever = WikipediaRetriever(
+        top_k_results=k_candidates,
+        doc_content_chars_max=2000,
+        load_all_available_meta=False,  # ✅ prevents metadata-related crashes / JSON parse errors
+    )
+
+    last_err = None
+    for attempt in range(retries):
+        try:
+            docs = retriever.invoke(query)
+            return (docs or [])[:k_candidates]
+        except Exception as e:
+            last_err = e
+            time.sleep(1.0 * (attempt + 1))  # 1s, 2s, 3s backoff
+
+    raise last_err
 
 
 def doc_to_url(doc) -> str:
-    title = doc.metadata.get("title") or ""
+    title = (doc.metadata or {}).get("title") or ""
     if not title:
         return ""
     return "https://en.wikipedia.org/wiki/" + title.replace(" ", "_")
@@ -152,8 +168,8 @@ def generate_report(industry: str, docs, model: str, api_key: str) -> str:
 
     sources = []
     for i, doc in enumerate(docs, start=1):
-        title = doc.metadata.get("title", f"Source {i}")
-        content = doc.page_content
+        title = (doc.metadata or {}).get("title", f"Source {i}")
+        content = doc.page_content or ""
         sources.append(f"Source {i}: {title}\n{content}")
     sources_text = "\n\n".join(sources)
 
@@ -182,9 +198,10 @@ def generate_report(industry: str, docs, model: str, api_key: str) -> str:
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
+        temperature=0.3,
     )
 
-    text = resp.output_text.strip()
+    text = (resp.output_text or "").strip()
     words = text.split()
     if len(words) > 500:
         text = " ".join(words[:500]) + "..."
@@ -213,13 +230,12 @@ industry = clean_industry(industry_input)
 if "wiki_docs" not in st.session_state:
     st.session_state.wiki_docs = []
 if "wiki_scored" not in st.session_state:
-    st.session_state.wiki_scored = []  # store scored pairs for debug
+    st.session_state.wiki_scored = []
 
 
 if st.button("Find Wikipedia pages"):
     lower = industry.lower()
 
-    # Basic invalid inputs (unicode-friendly: require at least one word char)
     if (not industry) or (lower in BAD_INPUTS) or (not re.search(r"\w", industry, flags=re.UNICODE)):
         st.warning("Please enter a valid industry (e.g., 'fast fashion', 'electric vehicles', 'retail banking').")
         st.session_state.wiki_docs = []
@@ -229,7 +245,7 @@ if st.button("Find Wikipedia pages"):
 
         try:
             with st.spinner("Searching Wikipedia..."):
-                candidates = get_wikipedia_pages(query, k_candidates=int(k_candidates))
+                candidates = get_wikipedia_pages(query, k_candidates=int(k_candidates), retries=3)
                 top_docs, scored_pairs = filter_and_rank_docs(
                     industry=industry,
                     docs=candidates,
@@ -252,7 +268,7 @@ if st.button("Find Wikipedia pages"):
 if st.session_state.wiki_docs:
     st.markdown("Step 2: Top 5 Wikipedia pages (ranked by relevance)")
     for idx, doc in enumerate(st.session_state.wiki_docs, start=1):
-        title = doc.metadata.get("title", f"Result {idx}")
+        title = (doc.metadata or {}).get("title", f"Result {idx}")
         url = doc_to_url(doc)
         if url:
             st.write(f"{idx}. {title} — {url}")
@@ -262,7 +278,7 @@ if st.session_state.wiki_docs:
     if show_debug and st.session_state.wiki_scored:
         with st.expander("Debug: relevance scores (higher = more relevant)"):
             for score, doc in st.session_state.wiki_scored:
-                title = doc.metadata.get("title", "")
+                title = (doc.metadata or {}).get("title", "")
                 st.write(f"{score:.2f}  -  {title}")
 
     st.markdown("Step 3: Generate industry report")
@@ -276,6 +292,4 @@ if st.session_state.wiki_docs:
                 try:
                     report = generate_report(industry, st.session_state.wiki_docs, llm_choice, api_key)
                     st.markdown("**Industry report**")
-                    st.text(report)
-                except OpenAIError as e:
-                    st.error(f"LLM request failed: {e}")
+                    st.t
