@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 import os
 import re
 import time
@@ -103,7 +105,7 @@ def relevance_score(industry: str, doc) -> float:
     c_tokens = tokenize(content)
 
     score = 0.0
-    score += 2.2 * overlap_score(q_tokens, t_tokens)
+    score += 2.2 * overlap_score(q_tokens, t_tokens)   # title heavier
     score += 1.0 * overlap_score(q_tokens, c_tokens)
 
     score += phrase_match_boost(industry, title, content)
@@ -141,7 +143,7 @@ def get_wikipedia_pages(query: str, k_candidates: int = 25, retries: int = 3):
     retriever = WikipediaRetriever(
         top_k_results=k_candidates,
         doc_content_chars_max=2000,
-        load_all_available_meta=False,  # ✅ prevents metadata-related crashes / JSON parse errors
+        load_all_available_meta=False,  # IMPORTANT: prevents many wikipedia meta-related failures
     )
 
     last_err = None
@@ -173,11 +175,13 @@ def generate_report(industry: str, docs, model: str, api_key: str) -> str:
         sources.append(f"Source {i}: {title}\n{content}")
     sources_text = "\n\n".join(sources)
 
-    system = (
+    instructions = (
         "You are a market research assistant. "
-        "Write concise, factual industry reports for business analysts."
+        "Write concise, factual industry reports for business analysts. "
+        "Use ONLY the provided sources. If a requested detail is missing, say it is not available in the sources."
     )
-    user = (
+
+    user_input = (
         f"Industry: {industry}\n\n"
         "Using ONLY the information from the sources below, write an industry report under 500 words.\n"
         "Format as plain text with exactly 6 sections. Each section must be on its own line and separated by a blank line.\n"
@@ -194,10 +198,8 @@ def generate_report(industry: str, docs, model: str, api_key: str) -> str:
 
     resp = client.responses.create(
         model=model,
-        input=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
+        instructions=instructions,
+        input=user_input,
         temperature=0.3,
     )
 
@@ -215,12 +217,23 @@ st.title(APP_TITLE)
 with st.sidebar:
     st.header("Settings")
     llm_choice = st.selectbox("LLM", options=[DEFAULT_LLM])
-    api_key = st.text_input("API key", type="password", value=os.getenv("OPENAI_API_KEY", ""))
+
+    # read key from secrets first, then env, then allow manual override
+    default_key = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY", ""))
+    api_key = st.text_input("API key", type="password", value=default_key)
 
     st.divider()
     st.subheader("Wikipedia ranking")
-    k_candidates = st.slider("Candidate pages to fetch", min_value=10, max_value=60, value=DEFAULT_K_CANDIDATES, step=5)
-    min_score = st.slider("Minimum relevance threshold", min_value=0.0, max_value=1.5, value=float(DEFAULT_MIN_RELEVANCE_SCORE), step=0.05)
+    k_candidates = st.slider(
+        "Candidate pages to fetch",
+        min_value=10, max_value=60,
+        value=DEFAULT_K_CANDIDATES, step=5
+    )
+    min_score = st.slider(
+        "Minimum relevance threshold",
+        min_value=0.0, max_value=1.5,
+        value=float(DEFAULT_MIN_RELEVANCE_SCORE), step=0.05
+    )
     show_debug = st.checkbox("Show debug scores", value=False)
 
 st.markdown("Step 1: Enter an industry")
@@ -231,7 +244,6 @@ if "wiki_docs" not in st.session_state:
     st.session_state.wiki_docs = []
 if "wiki_scored" not in st.session_state:
     st.session_state.wiki_scored = []
-
 
 if st.button("Find Wikipedia pages"):
     lower = industry.lower()
@@ -264,14 +276,13 @@ if st.button("Find Wikipedia pages"):
             st.session_state.wiki_docs = top_docs
             st.session_state.wiki_scored = scored_pairs
 
-
 if st.session_state.wiki_docs:
     st.markdown("Step 2: Top 5 Wikipedia pages (ranked by relevance)")
     for idx, doc in enumerate(st.session_state.wiki_docs, start=1):
         title = (doc.metadata or {}).get("title", f"Result {idx}")
         url = doc_to_url(doc)
         if url:
-            st.write(f"{idx}. {title} — {url}")
+            st.write(f"{idx}. {title} - {url}")  # use normal dash to avoid encoding issues
         else:
             st.write(f"{idx}. {title}")
 
@@ -284,12 +295,4 @@ if st.session_state.wiki_docs:
     st.markdown("Step 3: Generate industry report")
     if st.button("Generate report"):
         if not api_key:
-            st.warning("Please enter an API key to generate the report.")
-        elif not llm_choice:
-            st.warning("Please set the LLM model name in the sidebar.")
-        else:
-            with st.spinner("Generating report..."):
-                try:
-                    report = generate_report(industry, st.session_state.wiki_docs, llm_choice, api_key)
-                    st.markdown("**Industry report**")
-                    st.t
+            st.warning("Please set OPENAI_API_KEY in Streamlit secrets or enter it in the sidebar.
