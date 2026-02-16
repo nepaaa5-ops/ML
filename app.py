@@ -11,7 +11,7 @@ from langchain_community.retrievers import WikipediaRetriever
 from openai import OpenAI, OpenAIError
 
 APP_TITLE = "Market Research Assistant"
-DEFAULT_LLM = "gpt-5.2-pro"
+DEFAULT_LLM = "gpt-4o-mini"
 
 DEFAULT_K_CANDIDATES = 25
 DEFAULT_MIN_RELEVANCE_SCORE = 0.35
