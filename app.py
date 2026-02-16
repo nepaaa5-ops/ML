@@ -306,4 +306,51 @@ if st.button("Find Wikipedia pages"):
         try:
             with st.spinner("Searching Wikipedia..."):
                 candidates = get_wikipedia_pages_robust(query, k_candidates=int(k_candidates), lang=lang)
-                top_docs, scored_pairs =
+                top_docs, scored_pairs = filter_and_rank_docs(
+                    industry=industry,
+                    docs=candidates,
+                    top_n=5,
+                    min_score=float(min_score),
+                )
+        except Exception as e:
+            st.warning(f"Wikipedia search failed. Try again later or reduce Candidate pages. Error: {e}")
+            top_docs, scored_pairs = [], []
+
+        if not top_docs:
+            st.warning("Couldn't find relevant Wikipedia pages for that industry. Try a more specific industry name.")
+            st.session_state.wiki_docs = []
+            st.session_state.wiki_scored = []
+        else:
+            st.session_state.wiki_docs = top_docs
+            st.session_state.wiki_scored = scored_pairs
+
+if st.session_state.wiki_docs:
+    st.markdown("Step 2: Top 5 Wikipedia pages (ranked by relevance)")
+    for idx, doc in enumerate(st.session_state.wiki_docs, start=1):
+        title = (doc.metadata or {}).get("title", f"Result {idx}")
+        url = doc_to_url(doc, lang=lang)
+        if url:
+            st.write(f"{idx}. {title} - {url}")
+        else:
+            st.write(f"{idx}. {title}")
+
+    if show_debug and st.session_state.wiki_scored:
+        with st.expander("Debug: relevance scores (higher = more relevant)"):
+            for score, doc in st.session_state.wiki_scored:
+                title = (doc.metadata or {}).get("title", "")
+                st.write(f"{score:.2f}  -  {title}")
+
+    st.markdown("Step 3: Generate industry report")
+    if st.button("Generate report"):
+        if not api_key:
+            st.warning("Please enter an API key to generate the report.")
+        elif not llm_choice:
+            st.warning("Please set the LLM model name in the sidebar.")
+        else:
+            with st.spinner("Generating report..."):
+                try:
+                    report = generate_report(industry, st.session_state.wiki_docs, llm_choice, api_key)
+                    st.markdown("**Industry report**")
+                    st.text(report)
+                except OpenAIError as e:
+                    st.error(f"LLM request failed: {e}")
